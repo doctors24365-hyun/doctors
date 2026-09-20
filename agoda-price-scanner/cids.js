@@ -20,11 +20,15 @@ export const DEFAULT_CIDS = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  clearCookies: true,       // 스캔 전 아고다 쿠키 삭제 (영상의 1번 방법)
+  // "each"  : CID마다 쿠키를 지운다 (가장 정확, 대신 느림)
+  // "once"  : 스캔 시작 때 한 번만 지운다
+  // "off"   : 지우지 않는다 (로그인·회원가 유지)
+  cookieMode: "each",
   minimizeWindow: true,     // 스캔용 창을 최소화해서 방해받지 않게
-  concurrency: 2,           // 동시에 열 탭 수
+  concurrency: 2,           // 동시에 열 탭 수 (cookieMode "each"면 1로 고정)
   loadTimeoutMs: 45000,     // 탭 하나당 최대 대기 시간
-  betweenDelayMs: 700       // 탭 사이 간격
+  betweenDelayMs: 700,      // 탭 사이 간격
+  areaSelector: ""          // "가격 위치 지정"으로 학습한 영역
 };
 
 // 저장된 문자열("cid  라벨" 줄 단위)을 목록으로 변환

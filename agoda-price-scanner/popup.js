@@ -3,11 +3,14 @@ import { DEFAULT_CIDS, DEFAULT_SETTINGS, parseCidText, cidsToText } from "./cids
 const $ = (id) => document.getElementById(id);
 const el = {
   url: $("url"), urlInfo: $("urlInfo"), fromTab: $("fromTab"),
-  optBox: $("optBox"), clearCookies: $("clearCookies"), minimizeWindow: $("minimizeWindow"),
-  concurrency: $("concurrency"), cidText: $("cidText"), resetCids: $("resetCids"), cidCount: $("cidCount"),
+  optBox: $("optBox"), cookieMode: $("cookieMode"), minimizeWindow: $("minimizeWindow"),
+  concurrency: $("concurrency"), concHint: $("concHint"),
+  cidText: $("cidText"), resetCids: $("resetCids"), cidCount: $("cidCount"),
+  areaBox: $("areaBox"), areaTag: $("areaTag"), inspect: $("inspect"),
+  clearArea: $("clearArea"), cands: $("cands"),
   start: $("start"), cancel: $("cancel"), cookieOnly: $("cookieOnly"),
   progressBox: $("progressBox"), barFill: $("barFill"), progressText: $("progressText"),
-  msg: $("msg"), best: $("best"), resultBox: $("resultBox"), rows: $("rows")
+  msg: $("msg"), warn: $("warn"), best: $("best"), resultBox: $("resultBox"), rows: $("rows")
 };
 
 const STATUS_TEXT = {
@@ -48,25 +51,99 @@ function hotelName(url) {
 
 /* ---------- 설정 저장/복원 ---------- */
 
+let areaSelector = "";
+
 async function loadSettings() {
   const { settings, cidText, lastUrl } = await chrome.storage.local.get(["settings", "cidText", "lastUrl"]);
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
-  el.clearCookies.checked = s.clearCookies;
+  el.cookieMode.value = s.cookieMode;
   el.minimizeWindow.checked = s.minimizeWindow;
   el.concurrency.value = s.concurrency;
+  areaSelector = s.areaSelector || "";
+  renderArea();
   el.cidText.value = cidText || cidsToText(DEFAULT_CIDS);
   if (lastUrl) el.url.value = lastUrl;
   updateCidCount();
   updateUrlInfo();
+  updateConcHint();
 }
 
 function currentSettings() {
   return {
     ...DEFAULT_SETTINGS,
-    clearCookies: el.clearCookies.checked,
+    cookieMode: el.cookieMode.value,
     minimizeWindow: el.minimizeWindow.checked,
-    concurrency: Math.max(1, Math.min(4, Number(el.concurrency.value) || 1))
+    concurrency: Math.max(1, Math.min(4, Number(el.concurrency.value) || 1)),
+    areaSelector
   };
+}
+
+function updateConcHint() {
+  el.concHint.textContent = el.cookieMode.value === "each" ? "쿠키 초기화 때문에 1개로 고정" : "";
+}
+
+function renderArea() {
+  el.areaTag.textContent = areaSelector ? "지정됨" : "";
+  el.areaTag.classList.toggle("hidden", !areaSelector);
+  el.clearArea.classList.toggle("hidden", !areaSelector);
+}
+
+async function activeAgodaTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url || !/agoda\.com/i.test(tab.url)) return null;
+  return tab;
+}
+
+function renderCandidates(res) {
+  el.cands.innerHTML = "";
+  if (!res || !res.ok) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = (res && res.error) || "가격을 찾지 못했습니다.";
+    el.cands.appendChild(p);
+    return;
+  }
+  if (res.soldOut) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "이 페이지는 예약 가능한 객실이 없는 상태로 보입니다.";
+    el.cands.appendChild(p);
+  }
+  if (!res.candidates.length) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "가격처럼 보이는 요소가 없습니다. 객실 가격이 보이는 화면에서 다시 시도하세요.";
+    el.cands.appendChild(p);
+    return;
+  }
+  res.candidates.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "cand" + (i === 0 && !areaSelector ? " picked" : "");
+
+    const info = document.createElement("div");
+    info.className = "info";
+    const amt = document.createElement("div");
+    amt.className = "amt";
+    amt.textContent = money(c.amount, c.currency);
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = `${c.text} · ${Math.round(c.fontSize)}px${c.known ? " · 아고다 가격요소" : ""}`;
+    info.append(amt, sub);
+
+    const pick = document.createElement("button");
+    pick.className = "btn ghost sm";
+    pick.textContent = "이걸로";
+    pick.addEventListener("click", async () => {
+      areaSelector = c.area || "";
+      renderArea();
+      await saveSettings();
+      showMsg(areaSelector ? "이 위치를 기억했습니다." : "이 요소는 위치를 특정할 수 없습니다.", areaSelector ? "ok" : "");
+      renderCandidates(res);
+    });
+
+    row.append(info, pick);
+    el.cands.appendChild(row);
+  });
 }
 
 async function saveSettings() {
@@ -78,8 +155,17 @@ function updateCidCount() {
 }
 
 function updateUrlInfo() {
-  const name = hotelName(el.url.value.trim());
+  const raw = el.url.value.trim();
+  const name = hotelName(raw);
   el.urlInfo.textContent = name ? name.slice(0, 40) : "";
+  if (!raw) return;
+  const looksDetail = /\/hotel\//i.test(raw);
+  const hasDates = /checkIn=|checkin=/i.test(raw);
+  if (!looksDetail || !hasDates) {
+    el.urlInfo.textContent = !looksDetail
+      ? "호텔 상세 페이지 링크가 아닌 것 같습니다"
+      : "날짜 정보가 없는 링크입니다";
+  }
 }
 
 /* ---------- 결과 렌더링 ---------- */
@@ -103,6 +189,19 @@ function render(state) {
   const ok = state.results.filter((r) => r.status === "ok" && typeof r.amount === "number");
   const failed = state.results.filter((r) => r.status !== "ok");
   ok.sort((a, b) => a.amount - b.amount);
+
+  // CID를 바꿔도 값이 전부 같으면 대개 쿠키 때문에 CID가 무시된 것이다
+  const identical = ok.length >= 3 && ok.every((r) => r.amount === ok[0].amount);
+  let warnText = "";
+  if (!running && identical) {
+    warnText = el.cookieMode.value === "each"
+      ? "모든 CID의 가격이 같습니다. 이 호텔·날짜에는 CID별 차이가 없거나, 목록의 CID가 만료됐을 수 있습니다."
+      : "모든 CID의 가격이 같습니다. 쿠키 초기화를 \"CID마다 초기화\"로 바꾸고 다시 시도해 보세요.";
+  } else if (!running && ok.length && ok[0].via === "fallback") {
+    warnText = "지정한 가격 위치를 찾지 못해 자동 판단으로 읽었습니다. 가격이 이상하면 위치를 다시 지정하세요.";
+  }
+  el.warn.textContent = warnText;
+  el.warn.classList.toggle("hidden", !warnText);
 
   el.resultBox.classList.toggle("hidden", !state.results.length);
   el.rows.innerHTML = "";
@@ -197,9 +296,28 @@ el.cidText.addEventListener("input", () => {
   saveSettings();
 });
 
-[el.clearCookies, el.minimizeWindow, el.concurrency].forEach((n) =>
-  n.addEventListener("change", saveSettings)
+[el.cookieMode, el.minimizeWindow, el.concurrency].forEach((n) =>
+  n.addEventListener("change", () => {
+    updateConcHint();
+    saveSettings();
+  })
 );
+
+el.inspect.addEventListener("click", async () => {
+  const tab = await activeAgodaTab();
+  if (!tab) return showMsg("현재 탭이 아고다 페이지가 아닙니다.");
+  showMsg("");
+  el.cands.innerHTML = '<p class="hint">확인 중…</p>';
+  const res = await chrome.runtime.sendMessage({ type: "INSPECT_TAB", tabId: tab.id, areaSelector });
+  renderCandidates(res);
+});
+
+el.clearArea.addEventListener("click", async () => {
+  areaSelector = "";
+  renderArea();
+  await saveSettings();
+  showMsg("지정을 해제했습니다. 자동 판단으로 돌아갑니다.", "ok");
+});
 
 el.resetCids.addEventListener("click", () => {
   el.cidText.value = cidsToText(DEFAULT_CIDS);

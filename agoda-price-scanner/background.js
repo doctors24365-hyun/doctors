@@ -106,11 +106,11 @@ function waitForTabComplete(tabId, timeoutMs) {
   });
 }
 
-async function askPrice(tabId, timeoutMs) {
+async function askPrice(tabId, timeoutMs, areaSelector) {
   // content.js 주입이 끝나기 전일 수 있어 몇 번 재시도한다
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const res = await chrome.tabs.sendMessage(tabId, { type: "GET_PRICE", timeoutMs });
+      const res = await chrome.tabs.sendMessage(tabId, { type: "GET_PRICE", timeoutMs, areaSelector });
       if (res) return res;
     } catch (_) {
       await sleep(800);
@@ -136,6 +136,9 @@ async function scanOne(entry, settings) {
   const url = buildUrl(state.baseUrl, entry.cid);
   let tabId = null;
   try {
+    // CID는 첫 방문 때 세션 쿠키로 굳어지는 경우가 많다.
+    // 매번 지워 줘야 CID별 가격 차이가 실제로 드러난다.
+    if (settings.cookieMode === "each") await clearAgodaCookies();
     const tab = await chrome.tabs.create({ url, windowId: state.windowId, active: false });
     tabId = tab.id;
     if (tabId == null) throw new Error("탭을 열지 못했습니다");
@@ -143,9 +146,12 @@ async function scanOne(entry, settings) {
     await waitForTabComplete(tabId, settings.loadTimeoutMs);
     if (state.cancelled) return { ...entry, url, status: "cancelled" };
 
-    const res = await askPrice(tabId, Math.max(8000, settings.loadTimeoutMs - 10000));
+    const res = await askPrice(tabId, Math.max(8000, settings.loadTimeoutMs - 10000), settings.areaSelector || "");
     if (res.ok) {
-      return { ...entry, url, status: "ok", amount: res.amount, currency: res.currency, raw: res.raw };
+      return {
+        ...entry, url, status: "ok",
+        amount: res.amount, currency: res.currency, raw: res.raw, via: res.via
+      };
     }
     return { ...entry, url, status: res.reason || "failed" };
   } catch (e) {
@@ -176,12 +182,15 @@ async function runScan({ url, cids, settings }) {
   await publish();
 
   try {
-    if (settings.clearCookies) await clearAgodaCookies();
+    if (settings.cookieMode !== "off") await clearAgodaCookies();
     await ensureWindow("about:blank", settings.minimizeWindow);
 
     const queue = cids.slice();
     const workers = [];
-    const workerCount = Math.max(1, Math.min(4, Number(settings.concurrency) || 1));
+    // CID마다 쿠키를 지우려면 탭이 겹치면 안 되므로 순차 실행
+    const workerCount = settings.cookieMode === "each"
+      ? 1
+      : Math.max(1, Math.min(4, Number(settings.concurrency) || 1));
 
     for (let i = 0; i < workerCount; i++) {
       workers.push(
@@ -225,9 +234,45 @@ function cancelScan() {
   }
 }
 
+/** 확장을 새로 로드한 뒤 이미 열려 있던 탭에는 content.js가 없을 수 있다. */
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+  } catch (_) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    } catch (e) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function inspectTab(tabId, areaSelector) {
+  await ensureContentScript(tabId);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: "GET_CANDIDATES", areaSelector });
+      if (res) return res;
+    } catch (_) {
+      await sleep(500);
+    }
+  }
+  return { ok: false, error: "페이지에서 응답이 없습니다. 아고다 탭을 새로고침한 뒤 다시 시도하세요." };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || !msg.type) return false;
   switch (msg.type) {
+    case "INSPECT_TAB":
+      inspectTab(msg.tabId, msg.areaSelector || "").then(sendResponse);
+      return true;
+    case "HIGHLIGHT_TAB":
+      chrome.tabs
+        .sendMessage(msg.tabId, { type: "HIGHLIGHT", areaSelector: msg.areaSelector })
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
     case "START_SCAN":
       runScan({
         url: msg.url,

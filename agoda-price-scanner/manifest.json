@@ -1,18 +1,29 @@
 {
   "manifest_version": 3,
   "name": "아고다 최저가 스캐너",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "아고다 예약 링크의 CID(제휴 코드)를 바꿔가며 실제 가격을 비교하고, 쿠키를 지워 최저가를 찾아줍니다.",
-  "permissions": ["tabs", "storage", "browsingData"],
-  "host_permissions": ["*://*.agoda.com/*"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "browsingData",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.agoda.com/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.agoda.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://*.agoda.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }

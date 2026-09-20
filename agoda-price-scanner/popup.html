@@ -23,10 +23,17 @@
   <section class="block">
     <details id="optBox">
       <summary>스캔 설정</summary>
-      <label class="check"><input type="checkbox" id="clearCookies"> 스캔 전 아고다 쿠키·로컬 데이터 삭제</label>
+      <label class="lbl mt" for="cookieMode">쿠키 초기화</label>
+      <select id="cookieMode">
+        <option value="each">CID마다 초기화 (정확·느림)</option>
+        <option value="once">스캔 시작 때 한 번만</option>
+        <option value="off">초기화 안 함 (로그인 유지)</option>
+      </select>
+      <p class="hint">아고다는 첫 방문 때 CID를 세션 쿠키로 굳혀 버립니다. CID별 가격 차이가 안 나오면 "CID마다 초기화"로 두세요.</p>
       <label class="check"><input type="checkbox" id="minimizeWindow"> 스캔용 창 최소화</label>
       <label class="check inline">동시 탭 수
         <input type="number" id="concurrency" min="1" max="4" step="1">
+        <span class="hint" id="concHint"></span>
       </label>
       <label class="lbl mt" for="cidText">비교할 CID (한 줄에 하나, <code>번호 &lt;탭&gt; 메모</code>)</label>
       <textarea id="cidText" rows="8" spellcheck="false"></textarea>
@@ -34,6 +41,18 @@
         <button id="resetCids" class="btn ghost sm">기본 목록으로</button>
         <span class="hint" id="cidCount"></span>
       </div>
+    </details>
+  </section>
+
+  <section class="block">
+    <details id="areaBox">
+      <summary>가격 위치 지정 <span class="tag" id="areaTag"></span></summary>
+      <p class="hint">읽어 온 가격이 엉뚱하면, 아고다 탭을 띄운 채 아래 버튼을 눌러 올바른 가격을 직접 골라 주세요. 그 위치를 기억해 스캔에 사용합니다.</p>
+      <div class="row">
+        <button id="inspect" class="btn ghost sm">현재 탭에서 가격 확인</button>
+        <button id="clearArea" class="btn ghost sm hidden">지정 해제</button>
+      </div>
+      <div id="cands"></div>
     </details>
   </section>
 
@@ -49,6 +68,7 @@
   </section>
 
   <p id="msg" class="msg hidden"></p>
+  <p id="warn" class="warn hidden"></p>
 
   <section id="best" class="best hidden"></section>
 
